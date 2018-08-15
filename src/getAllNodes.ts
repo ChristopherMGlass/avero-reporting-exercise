@@ -1,5 +1,5 @@
 import axios, { AxiosPromise, AxiosResponse, AxiosRequestConfig } from 'axios'
-import { API_URL, AUTH_TOKEN, CHECK_PATH, LABOR_PATH, BUSINESS_PATH } from "./appConstants"
+import { API_URL, AUTH_TOKEN, CHECK_PATH, LABOR_PATH, BUSINESS_PATH, MS_IN_HOUR } from "./appConstants"
 
 /**
  * takes in a function that returns a count and last entry
@@ -82,12 +82,12 @@ interface Employee extends ServerData {
     pay_rate: number
 }
 
-interface APIData{
-    EmplyeeData:Promise<Employee[]>
-    BusinesData:Promise<Business[]>
-    CheckData:Promise<Check[]>
-    LaborData:Promise<LaborEntry[]>
-    ItemData:Promise<OrderedItem[]>
+interface APIData {
+    EmplyeeData: Promise<Employee[]>
+    BusinesData: Promise<Business[]>
+    CheckData: Promise<Check[]>
+    LaborData: Promise<LaborEntry[]>
+    ItemData: Promise<OrderedItem[]>
 }
 
 interface TimeFrame {
@@ -101,11 +101,17 @@ interface EGSReportEntry extends Report {
     employee: string
     value: number
 }
-enum Interval {
-    hour, day, month  //Week??
+interface FCPEntry extends Report {
+    value: number
 }
-enum ReportType{
-    LCP,FCP,EGS
+interface LCPEntry extends Report {
+    value: number
+}
+enum Interval {
+    hour = "hour", day = "day", month = "month"  //Week??
+}
+enum ReportType {
+    LCP, FCP, EGS
 }
 export function buildConfig(path: string, requestParams: RequestParams): AxiosRequestConfig {
     let requestConfig: AxiosRequestConfig = {
@@ -232,7 +238,7 @@ function calcFoodCost(start: number, end: number, items: OrderedItem[]) {
     return sum
 }
 
-function calcEGS(start: number, end: number, laborEntries: LaborEntry[], orderdItems: OrderedItem[], employees: Employee[]) {
+function calcEGS(start: number, end: number, laborEntries: LaborEntry[], orderdItems: OrderedItem[], employees: Employee[]): EGSReportEntry[] {
     let EgsEntries: EGSReportEntry[] = []
     laborEntries.forEach((entry: LaborEntry) => {
         if (Date.parse(entry.clock_out) >= start && Date.parse(entry.clock_in) <= end) {
@@ -259,20 +265,160 @@ function calcEGS(start: number, end: number, laborEntries: LaborEntry[], orderdI
             )
         }
     })
+    return EgsEntries
 
 }
-async function buildEPSReport(interval: Interval, business: string,start:string,end:string, DataStruct:APIData) {
-    let laborEntries:LaborEntry[]=await DataStruct.LaborData
-     let orderdItems:OrderedItem[]=await DataStruct.ItemData
-     let employees:Employee[]=await DataStruct.EmplyeeData
-    
-    let report={
-        report:"EPS",
-        timeInterval:interval,
-        data:calcEGS(Date.parse(start),Date.parse(end),laborEntries,orderdItems,employees)
+// async function buildFCPReport(interval: Interval, business: string, start: string, end: string, DataStruct: APIData) {
+//     let orderdItems: OrderedItem[] = await DataStruct.ItemData
+//     let cost =
+//         orderdItems.forEach(item => {
+//             item.cost
+//         });
+// }
+
+async function buildEGSReport(interval: Interval, business: string, start: string, end: string, DataStruct: APIData) {
+    let laborEntries: LaborEntry[] = await DataStruct.LaborData
+    let orderdItems: OrderedItem[] = await DataStruct.ItemData
+    let employees: Employee[] = await DataStruct.EmplyeeData
+
+    let startDate = new Date(start)
+    let endDate = new Date(end)
+    let data: EGSReportEntry[] = []
+    while (startDate.getTime() < endDate.getTime()) {
+        let next: Date = startDate
+        switch (interval) {
+            case Interval.hour:
+                next.setHours(startDate.getHours() + 1)
+                break;
+            case Interval.day:
+                next.setDate(startDate.getDate() + 1)
+                break;
+            case Interval.month:
+                next.setDate(startDate.getDate() + 1)
+                break;
+        }
+        data = data.concat(calcEGS(startDate.getTime(), endDate.getTime(), laborEntries, orderdItems, employees))
+        startDate = next
+    }
+    let report = {
+        report: "EGS",
+        timeInterval: interval,
+        data: data
     }
     return report
 }
-function generateFCPReport() {
+function buildLCPReport(interval: Interval, start: string, end: string) {
+    let startDate = new Date(start)
+    let endDate = new Date(end)
+    let data: LCPEntry[] = []
+    while (startDate.getTime() < endDate.getTime()) {
+        let next: Date = startDate
+        switch (interval) {
+            case Interval.hour:
+                next.setHours(startDate.getHours() + 1)
+                break;
+            case Interval.day:
+                next.setDate(startDate.getDate() + 1)
+                break;
+            case Interval.month:
+                next.setDate(startDate.getDate() + 1)
+                break;
+        }
+        data = data.concat({
+            timeFrame: {
+                start: startDate.toISOString(),
+                end: next.toISOString()
+            },
+            value: getLCP(startDate.getTime(), endDate.getTime())
+        }
+        )
+        startDate = next
+    }
+}
+function getLCP(start: number, end: number): number {
+    let laborEntries: LaborEntry[] = []
+    let orderdItems: OrderedItem[] = []
+    let laborCost: number = 0
+    let sales:number=0
+    laborEntries.forEach((entry: LaborEntry) => {
+        let clock_in: number = new Date(entry.clock_out).getTime()
+        let clock_out: number = new Date(entry.clock_out).getTime()
+        if (clock_out > start && clock_in < end) {
+            laborCost += entry.pay_rate * (Math.min(clock_out, end) - Math.max(start, clock_in)) / MS_IN_HOUR
+        }
+    })
+    // there might be a way to leverage past calculations of sales revene but I don't see a clean/easy way atm
+    orderdItems.forEach((item:OrderedItem)=>{
+        if (!item.time) {
+            console.error("an item without a time is present in collected data")
+            return
+        }
+        let itemTime: number = new Date(item.time).getTime()
+        if (!item.voided && itemTime > start && itemTime < end) {
+            sales += item.price
+        }
+    })
+    return laborCost/sales * 100
+}
+function buildFCPReport(interval: Interval, start: string, end: string) {
+    let startDate = new Date(start)
+    let endDate = new Date(end)
+    let data: FCPEntry[] = []
+    while (startDate.getTime() < endDate.getTime()) {
+        let next: Date = startDate
+        switch (interval) {
+            case Interval.hour:
+                next.setHours(startDate.getHours() + 1)
+                break;
+            case Interval.day:
+                next.setDate(startDate.getDate() + 1)
+                break;
+            case Interval.month:
+                next.setDate(startDate.getDate() + 1)
+                break;
+        }
+        data = data.concat({
+            timeFrame: {
+                start: startDate.toISOString(),
+                end: next.toISOString()
+            },
+            value: getFCP(startDate.getTime(), endDate.getTime())
+        }
+        )
+        startDate = next
+    }
+}
+function getFCP(start: number, end: number) {
+    let orderdItems: OrderedItem[] = []
+    let cost: number = 0
+    let sales: number = 0
+    orderdItems.forEach((item: OrderedItem) => {
+        if (!item.time) {
+            console.error("an item without a time is present in collected data")
+            return
+        }
+        let itemTime: number = new Date(item.time).getTime()
+        if (itemTime > start && itemTime < end) {
+            cost += item.cost
+            if(!item.voided){
+                sales += item.price
+            }
+        }
+    })
 
+    return cost / sales * 100  // units are in percentages
+}
+
+// function breakIntoTimeWindows(interval:Interval,start:string,end:string):number{
+//     switch(interval){
+//         case Interval.hour:
+//             let numberWindows=Math.ceil((Date.parse(end)-Date.parse(start))/MS_IN_HOUR)
+//         break;
+//         case Interval.day:
+//         case Interval.month:
+//     }
+// }
+
+function startServer(){
+    server= express()
 }

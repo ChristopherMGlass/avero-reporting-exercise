@@ -5,3 +5,5 @@ export const BUSINESS_PATH:string="/businesses"
 export const MENUITEMS_PATH:string="/menuItems"
 export const ORDERED_ITEMS_PATH:string="/orderedItems"
 export const LABOR_PATH:string='/laborEntries'
+export const MS_IN_HOUR:number=3600000
+export const MS_IN_DAY:number=86400000

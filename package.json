@@ -9,6 +9,7 @@
   "author": "Christopher Glass",
   "license": "ISC",
   "dependencies": {
+    "@types/express": "^4.16.0",
     "axios": "^0.18.0",
     "express": "^4.16.3"
   },
