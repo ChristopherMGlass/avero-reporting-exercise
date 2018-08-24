@@ -1,5 +1,6 @@
-import axios, { AxiosPromise, AxiosResponse, AxiosRequestConfig } from 'axios'
-import { API_URL, AUTH_TOKEN, CHECK_PATH, LABOR_PATH, BUSINESS_PATH, MS_IN_HOUR } from "./appConstants"
+import axios, { AxiosPromise, AxiosResponse, AxiosRequestConfig, AxiosError } from 'axios'
+import { API_URL, AUTH_TOKEN, CHECK_PATH, LABOR_PATH, BUSINESS_PATH, MS_IN_HOUR, EMPLOYEE_PATH, ORDERED_ITEMS_PATH, CONNECTION_TIMEOUT_LENGTH } from "./appConstants"
+import { businessStore } from './servet';
 
 /**
  * takes in a function that returns a count and last entry
@@ -9,27 +10,89 @@ export async function getAllEntries<T>(requestconfig: AxiosRequestConfig): Promi
     let count: number = 1
     let response: Response<T> = { data: [], count: -1 }
     let fullEntryList: Response<T> = { data: [], count: -1 }
-    while (offset < count) {
-        requestconfig.params.offset = offset
-        try {
-            response = await callService<T>(requestconfig).then<Response<T>, Response<T>>(handleResponse, handleError)
-        } catch (e) {
-            console.error(e)
-            return { data: [], count: -1 }
-        }
-        offset = response.data.length
-        count = response.count
-        fullEntryList.data = fullEntryList.data.concat(response.data)
-        fullEntryList.count = count
+
+    //Simple while loop result in intermittent timeout errors
+
+    //call first time
+    let tempDataStore: Promise<T[]>[] = []
+    tempDataStore[0] = callService<T>(offset,requestconfig)
+        .then<Response<T>, Response<T>>(handleResponse, handleError)
+        .then((response: Response<T>) => {
+            // console.log(response)
+            count = response.count
+            return (response.data)
+        })
+    await tempDataStore[0]
+    offset += 500
+    // fullEntryList.count = response.count
+
+    //create subsequnet calls
+    let i: number = 1
+    for (; offset < count; offset += 500) {
+        
+        // console.log("config",requestconfig.params)
+        tempDataStore[i] = callService<T>(offset,requestconfig).then<Response<T>, Response<T>>(handleResponse, handleError)
+            .then((callResponse: Response<T>) => {
+                console.log("reponse data len",callResponse.data.length)
+                // console.log(callResponse.data[0])
+                return (callResponse.data)
+            })
+        console.log(await tempDataStore.length)
+        i++
     }
-    return fullEntryList
+    // console.log(count,offset)
+    // console.log(tempDataStore.length)
+    let fullResponse: Response<T> = { count: count, data: [] }
+    let pending = Promise.all(tempDataStore).then(async values => {
+        
+        for (let idx in values) {
+            console.log(idx)
+            if (values[idx] == []) {
+                console.log("an error occured retrying")
+                let index: any = idx
+                let retryoffset = index * 500
+                await callService<T>(retryoffset,requestconfig).then<Response<T>, Response<T>>(handleResponse, handleError).then((response) => {
+                    fullResponse.data = fullResponse.data.concat(response.data)
+                })
+            } else {
+                console.log(values[idx].length)
+                fullResponse.data = fullResponse.data.concat(values[idx])
+            }
+        }
+    })
+    await pending
+
+    return fullResponse
+
+
+    // while (offset < count) {
+    //     console.log(count, offset)
+    //     requestconfig.params.offset = offset
+    //     try {
+    //         response = await callService<T>(requestconfig).then<Response<T>, Response<T>>(handleResponse, handleError)
+
+    //         offset += 500
+    //         count = response.count
+    //         fullEntryList.data = fullEntryList.data.concat(response.data)
+    //         fullEntryList.count = count
+    //     } catch (e) {
+    //         console.error(e)
+    //         // throw "error connecting to api endpoint"
+
+    //     }
+    // }
 }
 
+interface ResoltionTracker<T> {
+    resolved: boolean,
+    offset: number,
+    promise: Promise<any>
+}
 export interface Response<T= any> {
     count: number,
     data: T[],
 }
-interface ServerData {
+export interface ServerData {
     id: string,
     created_at: string
     updated_at: string
@@ -41,7 +104,7 @@ export interface RequestParams {
     offset?: number,
     employee_id?: string,
 }
-interface OrderedItem extends ServerData {
+export interface OrderedItem extends ServerData {
     business_id: string,
     employee_id: string
     check_id: string
@@ -53,7 +116,7 @@ interface OrderedItem extends ServerData {
     time?: string
 }
 
-interface LaborEntry extends ServerData {
+export interface LaborEntry extends ServerData {
     business_id: string,
     employee_id: string
     clock_in: string
@@ -62,20 +125,18 @@ interface LaborEntry extends ServerData {
     price: number,
     voided: boolean
 }
-interface Check extends ServerData {
+export interface Check extends ServerData {
     business_id: string,
     employee_id: string
     name: string
     closed: boolean
     closed_at: string
-    price: number,
-    voided: boolean
 }
 interface Business extends ServerData {
     name: string,
     hours: number[]
 }
-interface Employee extends ServerData {
+export interface Employee extends ServerData {
     business_id: string,
     first_name: string,
     last_name: string,
@@ -90,33 +151,13 @@ interface APIData {
     ItemData: Promise<OrderedItem[]>
 }
 
-interface TimeFrame {
-    start: string,
-    end: string
-}
-interface Report {
-    timeFrame: TimeFrame,
-}
-interface EGSReportEntry extends Report {
-    employee: string
-    value: number
-}
-interface FCPEntry extends Report {
-    value: number
-}
-interface LCPEntry extends Report {
-    value: number
-}
-enum Interval {
-    hour = "hour", day = "day", month = "month"  //Week??
-}
-enum ReportType {
-    LCP, FCP, EGS
-}
+
+
 export function buildConfig(path: string, requestParams: RequestParams): AxiosRequestConfig {
     let requestConfig: AxiosRequestConfig = {
         method: 'get',
         baseURL: API_URL,
+        timeout:CONNECTION_TIMEOUT_LENGTH,
         url: path,
         headers: { "Authorization": AUTH_TOKEN },
         params: requestParams
@@ -130,6 +171,7 @@ export function handleResponse<T>(rawResponse: AxiosResponse): Response<T> {
     if (rawResponse.status !== 200) {
         throw "HTTP Error:" + rawResponse.status + ' ' + rawResponse.statusText
     }
+    console.log("params:",rawResponse.config.params,rawResponse.data.data.length)
     let response: Response<T> = {
         data: rawResponse.data.data,
         count: rawResponse.data.count
@@ -138,28 +180,31 @@ export function handleResponse<T>(rawResponse: AxiosResponse): Response<T> {
 
 }
 
-export function handleError(rawResponse: AxiosResponse): Response {
-    console.log(rawResponse)
-    console.error("response error")
+export function handleError(rawResponse: AxiosError): Response {
+    console.error("response error", rawResponse.code, rawResponse.config.params)
+    // console.log(rawResponse)
     let result: Response = { data: [], count: -1 }
     return result
 }
-type ServiceCall = (arg: AxiosRequestConfig) => AxiosPromise
 
-export function callService<T>(requestConfig: AxiosRequestConfig): AxiosPromise<Response<T>> {
-    return axios(requestConfig)
+export function callService<T>(offset:number,requestConfig: AxiosRequestConfig): AxiosPromise<Response<T>> {
+    requestConfig.params.offset=offset
+    console.log("call params",requestConfig.params)
+    return axios(Object.assign({},requestConfig))
 
 }
 
 
-export async function getAllChecks(bid: string) {
+export async function getAllChecks(bid: string): Promise<Check[]> {
     let path: string = CHECK_PATH
     let requestParams: RequestParams = {
         limit: 500,
         businiess_id: bid
     }
     let checkConfig = buildConfig(path, requestParams)
-    // getAllEntries(checkConfig)
+    return getAllEntries<Check>(checkConfig).then((response: Response<Check>) => {
+        return response.data
+    })
 }
 
 export async function buildLaborEntries(bid: string): Promise<LaborEntry[]> {
@@ -172,6 +217,7 @@ export async function buildLaborEntries(bid: string): Promise<LaborEntry[]> {
     return getAllEntries<LaborEntry>(laborConfig).then((response: Response<LaborEntry>) => {
         return response.data
     })
+
 }
 
 export async function buildItems(bid: string): Promise<OrderedItem[]> {
@@ -179,29 +225,51 @@ export async function buildItems(bid: string): Promise<OrderedItem[]> {
         limit: 500,
         businiess_id: bid
     }
-    let checkConfig = buildConfig(CHECK_PATH, requestParams)
-    let checks = getAllEntries<Check>(checkConfig).then(response => {
+    // let checkConfig = buildConfig(CHECK_PATH, requestParams)
+    // let checks = getAllEntries<Check>(checkConfig).then(response => {
+    //     return response.data
+    // })
+    //TODO - what do I have to do???
+    let itemConfig: AxiosRequestConfig = buildConfig(ORDERED_ITEMS_PATH, requestParams)
+
+    let orderItems = getAllEntries<OrderedItem>(itemConfig).then(async (response: Response<OrderedItem>) => {
+        //return  mergeCheckIntoItem(response.data, await checks)
         return response.data
-    })
-
-    let itemConfig: AxiosRequestConfig = buildConfig(LABOR_PATH, requestParams)
-    let orderItems = getAllEntries<OrderedItem>(itemConfig).then((response: Response<OrderedItem>) => {
-        let items: OrderedItem[] = response.data.map((item: OrderedItem) => {
-
-            checks.then((checksList: Check[]) => {
-                const itemCheck: Check | undefined = checksList.find((check) => {
-                    return item.check_id == check.id && check.closed
-                })
-                if (itemCheck) {
-                    item.time = itemCheck.closed_at
-                }
-            })
-            return item
-        });
-        return items
     })
     return orderItems
 
+
+}
+export function mergeCheckIntoItem(orderdItems: OrderedItem[], checks: Check[]) {
+    console.log(orderdItems.length)
+    let items: OrderedItem[] = orderdItems.map((item: OrderedItem) => {
+        if (!item) {
+            console.log(items)
+            console.log("length",items.length)
+        }
+        // console.log(item.check_id)
+        const itemCheck: Check | undefined = checks.find((check) => {
+            return item.check_id == check.id && check.closed
+        })
+        if (itemCheck) {
+            item.time = itemCheck.closed_at
+        } else {
+            // console.log("check not found")
+        }
+        return item
+    });
+    return items
+}
+
+async function getAllEmployees(bid: string) {
+    let requestParams: RequestParams = {
+        limit: 500,
+        businiess_id: bid
+    }
+    let laborConfig = buildConfig(EMPLOYEE_PATH, requestParams)
+    return getAllEntries<Employee>(laborConfig).then((response: Response<Employee>) => {
+        return response.data
+    })
 }
 
 export async function buildBusinessList() {
@@ -218,56 +286,8 @@ export async function getAllOrderedItems() {
 
 }
 
-function calcSales(start: number, end: number, items: OrderedItem[]) {
-    let sum: number = 0
-    items.forEach((item: OrderedItem) => {
-        if (item.time && Date.parse(item.time) >= start && Date.parse(item.time) <= end) {
-            sum += item.price
-        }
-    })
-    return sum
-}
-//todo make generic
-function calcFoodCost(start: number, end: number, items: OrderedItem[]) {
-    let sum: number = 0
-    items.forEach((item: OrderedItem) => {
-        if (item.time && Date.parse(item.time) >= start && Date.parse(item.time) <= end) {
-            sum += item.cost
-        }
-    })
-    return sum
-}
 
-function calcEGS(start: number, end: number, laborEntries: LaborEntry[], orderdItems: OrderedItem[], employees: Employee[]): EGSReportEntry[] {
-    let EgsEntries: EGSReportEntry[] = []
-    laborEntries.forEach((entry: LaborEntry) => {
-        if (Date.parse(entry.clock_out) >= start && Date.parse(entry.clock_in) <= end) {
-            let employee_data = employees.find(it => {
-                return it.id == entry.employee_id
-            })
-            if (!employee_data) {
-                throw "employee with id " + entry.employee_id + " could not be found"
-            }
-            let employeeItems: OrderedItem[] = orderdItems.filter((item: OrderedItem) => {
-                item.employee_id == entry.employee_id
-            })
-            let employeeSales = calcSales(start, end, employeeItems)
-            EgsEntries.push(
-                {
-                    timeFrame: {
-                        start: new Date(start).toISOString(),
-                        end: new Date(end).toISOString()
-                    },
-                    employee: employee_data.first_name + ' ' + employee_data.last_name,
-                    value: employeeSales
 
-                }
-            )
-        }
-    })
-    return EgsEntries
-
-}
 // async function buildFCPReport(interval: Interval, business: string, start: string, end: string, DataStruct: APIData) {
 //     let orderdItems: OrderedItem[] = await DataStruct.ItemData
 //     let cost =
@@ -276,138 +296,6 @@ function calcEGS(start: number, end: number, laborEntries: LaborEntry[], orderdI
 //         });
 // }
 
-async function buildEGSReport(interval: Interval, business: string, start: string, end: string, DataStruct: APIData) {
-    let laborEntries: LaborEntry[] = await DataStruct.LaborData
-    let orderdItems: OrderedItem[] = await DataStruct.ItemData
-    let employees: Employee[] = await DataStruct.EmplyeeData
-
-    let startDate = new Date(start)
-    let endDate = new Date(end)
-    let data: EGSReportEntry[] = []
-    while (startDate.getTime() < endDate.getTime()) {
-        let next: Date = startDate
-        switch (interval) {
-            case Interval.hour:
-                next.setHours(startDate.getHours() + 1)
-                break;
-            case Interval.day:
-                next.setDate(startDate.getDate() + 1)
-                break;
-            case Interval.month:
-                next.setDate(startDate.getDate() + 1)
-                break;
-        }
-        data = data.concat(calcEGS(startDate.getTime(), endDate.getTime(), laborEntries, orderdItems, employees))
-        startDate = next
-    }
-    let report = {
-        report: "EGS",
-        timeInterval: interval,
-        data: data
-    }
-    return report
-}
-function buildLCPReport(interval: Interval, start: string, end: string) {
-    let startDate = new Date(start)
-    let endDate = new Date(end)
-    let data: LCPEntry[] = []
-    while (startDate.getTime() < endDate.getTime()) {
-        let next: Date = startDate
-        switch (interval) {
-            case Interval.hour:
-                next.setHours(startDate.getHours() + 1)
-                break;
-            case Interval.day:
-                next.setDate(startDate.getDate() + 1)
-                break;
-            case Interval.month:
-                next.setDate(startDate.getDate() + 1)
-                break;
-        }
-        data = data.concat({
-            timeFrame: {
-                start: startDate.toISOString(),
-                end: next.toISOString()
-            },
-            value: getLCP(startDate.getTime(), endDate.getTime())
-        }
-        )
-        startDate = next
-    }
-}
-function getLCP(start: number, end: number): number {
-    let laborEntries: LaborEntry[] = []
-    let orderdItems: OrderedItem[] = []
-    let laborCost: number = 0
-    let sales:number=0
-    laborEntries.forEach((entry: LaborEntry) => {
-        let clock_in: number = new Date(entry.clock_out).getTime()
-        let clock_out: number = new Date(entry.clock_out).getTime()
-        if (clock_out > start && clock_in < end) {
-            laborCost += entry.pay_rate * (Math.min(clock_out, end) - Math.max(start, clock_in)) / MS_IN_HOUR
-        }
-    })
-    // there might be a way to leverage past calculations of sales revene but I don't see a clean/easy way atm
-    orderdItems.forEach((item:OrderedItem)=>{
-        if (!item.time) {
-            console.error("an item without a time is present in collected data")
-            return
-        }
-        let itemTime: number = new Date(item.time).getTime()
-        if (!item.voided && itemTime > start && itemTime < end) {
-            sales += item.price
-        }
-    })
-    return laborCost/sales * 100
-}
-function buildFCPReport(interval: Interval, start: string, end: string) {
-    let startDate = new Date(start)
-    let endDate = new Date(end)
-    let data: FCPEntry[] = []
-    while (startDate.getTime() < endDate.getTime()) {
-        let next: Date = startDate
-        switch (interval) {
-            case Interval.hour:
-                next.setHours(startDate.getHours() + 1)
-                break;
-            case Interval.day:
-                next.setDate(startDate.getDate() + 1)
-                break;
-            case Interval.month:
-                next.setDate(startDate.getDate() + 1)
-                break;
-        }
-        data = data.concat({
-            timeFrame: {
-                start: startDate.toISOString(),
-                end: next.toISOString()
-            },
-            value: getFCP(startDate.getTime(), endDate.getTime())
-        }
-        )
-        startDate = next
-    }
-}
-function getFCP(start: number, end: number) {
-    let orderdItems: OrderedItem[] = []
-    let cost: number = 0
-    let sales: number = 0
-    orderdItems.forEach((item: OrderedItem) => {
-        if (!item.time) {
-            console.error("an item without a time is present in collected data")
-            return
-        }
-        let itemTime: number = new Date(item.time).getTime()
-        if (itemTime > start && itemTime < end) {
-            cost += item.cost
-            if(!item.voided){
-                sales += item.price
-            }
-        }
-    })
-
-    return cost / sales * 100  // units are in percentages
-}
 
 // function breakIntoTimeWindows(interval:Interval,start:string,end:string):number{
 //     switch(interval){
@@ -419,6 +307,18 @@ function getFCP(start: number, end: number) {
 //     }
 // }
 
-function startServer(){
-    server= express()
+
+export async function getAllData(bid: string): Promise<businessStore> {
+    let items = await buildItems(bid)
+    let labor = await buildLaborEntries(bid)
+    let checks = await getAllChecks(bid)
+    let employees = await getAllEmployees(bid)
+    let mergedItems:OrderedItem[] = mergeCheckIntoItem(items, checks)
+    console.log(mergedItems[0])
+    return ({
+        id: bid,
+        orderedItems: mergedItems,
+        laborEntries: labor,
+        employees: employees
+    })
 }
