@@ -1,9 +1,9 @@
-import { buildFCPReport, Interval, buildEGSReport, buildLCPReport } from "../src/reports"
-import { businessStore } from "../src/servet";
-import { OrderedItem } from "../src/getAllNodes";
+import { buildFCPReport, buildEGSReport, buildLCPReport } from "../src/reports"
+import { businessStore } from "../src/server";
 import testItems from "./orderedItems";
 import 'mocha'
 import { expect } from 'chai'
+import { Interval } from "../src/reportingInterfaces";
 let laborEntries = require("./laborEntries.json");
 let employees = require("./employees.json");
 

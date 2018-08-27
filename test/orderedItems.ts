@@ -1,4 +1,4 @@
-import { OrderedItem } from "../src/getAllNodes";
+import { OrderedItem } from "../src/posInterfaces";
 
  const items: OrderedItem[] = [{
 

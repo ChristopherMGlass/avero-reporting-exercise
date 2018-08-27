@@ -1,18 +1,17 @@
 import { AxiosResponse, AxiosRequestConfig } from "axios";
-import { handleResponse, buildConfig, RequestParams, getAllEntries, callService, mergeCheckIntoItem, Check } from "../src/getAllNodes";
+import { handleResponse, buildConfig, getAllEntries, mergeCheckIntoItem, } from "../src/posAPI";
 
 import { expect } from 'chai'
 import 'mocha'
 import { API_URL, AUTH_TOKEN } from "../src/appConstants";
+import { RequestParams } from "../src/posInterfaces";
+import { TIMEOUT } from "dns";
 let testItems=require("./simpleItems.json")
 let testchecks=require("./simpleChecks.json")
 
 
 describe('testing API connection', () => {
-    //test start out simple and integrate more and more components
-    it('should make axios call', () => {
 
-    })
 
     it('should merge checks into items', () => {
         let items = [
@@ -80,10 +79,6 @@ describe('testing API connection', () => {
     expect(result[1].time).to.eql("2018-06-02T17:41:00.000Z")
     expect(result[2].time).to.eql("2018-06-01T17:51:00.000Z")
 
-    
-    // let sndresult=mergeCheckIntoItem(testItems,testchecks.data)
-    // console.log(sndresult)
-
     })
     //TODO - test call failures
     it('should handle an api response', () => {
@@ -112,6 +107,7 @@ describe('testing API connection', () => {
         let expectedConfig: AxiosRequestConfig = {
             method: 'get',
             baseURL: API_URL,
+            timeout:45000,
             url: path,
             headers: { "Authorization": AUTH_TOKEN },
             params: requestParams
@@ -126,6 +122,7 @@ describe('testing API connection', () => {
             baseURL: API_URL,
             url: "/businesses",
             headers: { "Authorization": AUTH_TOKEN },
+            timeout:45000,
             params: {
                 limit: 500
             }

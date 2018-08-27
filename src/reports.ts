@@ -1,36 +1,8 @@
-import { OrderedItem, LaborEntry, Employee } from "./getAllNodes";
-import { businessStore } from "./servet";
+import { businessStore } from "./server";
 import { MS_IN_HOUR } from "./appConstants";
+import { EGSReportEntry, Interval, Report, LCPEntry, FCPEntry } from "./reportingInterfaces";
+import { OrderedItem, Employee, LaborEntry } from "./posInterfaces";
 
-interface TimeFrame {
-    start: string,
-    end: string
-}
-export interface Report {
-    timeInterval: string,
-    report: string,
-    data: ReportEntry[]
-}
-interface ReportEntry {
-    timeFrame: TimeFrame,
-}
-interface EGSReportEntry extends ReportEntry {
-    employee: string
-    value: number
-}
-interface FCPEntry extends ReportEntry {
-    value: number
-}
-interface LCPEntry extends ReportEntry {
-    value: number
-}
-
-export enum Interval {
-    hour = "hour", day = "day", month = "month"  //Week??
-}
-enum ReportType {
-    LCP, FCP, EGS
-}
 
 function calcEGS(start: number, end: number, orderdItems: OrderedItem[], employees: Employee[]): EGSReportEntry[] {
     let EgsEntries: EGSReportEntry[] = []
@@ -42,7 +14,7 @@ function calcEGS(start: number, end: number, orderdItems: OrderedItem[], employe
         if (!employee_data) {
             throw "employee with id " + entry.id + " could not be found"
         }
-        let employeeItems: OrderedItem[] = orderdItems.filter((item: OrderedItem) => {
+        let employeeItems: OrderedItem [] = orderdItems.filter((item: OrderedItem) => {
             return item.employee_id == entry.id
         })
         let employeeSales = calcSales(start, end, employeeItems)
@@ -93,7 +65,6 @@ export function buildLCPReport(interval: Interval, start: string, end: string, l
     let startDate = new Date(start)
     let endDate = new Date(end)
     let data: LCPEntry[] = []
-    console.log("building lcp report")
     while (startDate.getTime() < endDate.getTime()) {
         let next: Date = new Date(startDate)
         switch (interval) {
@@ -138,22 +109,9 @@ export function getLCP(start: number, end: number, laborEntries: LaborEntry[], o
 
         }
     })
-
-    sales=calcSales(start,end,orderedItems)
     // there might be a way to leverage past calculations of sales revene but I don't see a clean/easy way atm
-    // orderedItems.forEach((item: OrderedItem) => {
-    //     if (!item.time) {
-    //         // console.error("an item without a time is present in collected data")
-    //         // console.log(item)
-    //         return
-    //     }
-    //     let itemTime: number = new Date(item.time).getTime()
-    //     if (!item.voided && itemTime > start && itemTime < end) {
-    //         console.log("item added to sales")
-    //         sales += item.price
-    //     }
-    // })
-    console.log(laborCost,sales)
+    sales=calcSales(start,end,orderedItems)
+  
     return laborCost / sales * 100
 }
 export function buildFCPReport(interval: Interval, start: string, end: string, itemsStore: OrderedItem[]) {
@@ -189,6 +147,7 @@ export function buildFCPReport(interval: Interval, start: string, end: string, i
         data: data
     })
 }
+
 function getFCP(start: number, end: number, orderdItems: OrderedItem[]) {
     let cost: number = 0
     let sales: number = 0
@@ -212,10 +171,8 @@ function getFCP(start: number, end: number, orderdItems: OrderedItem[]) {
 function calcSales(start: number, end: number, items: OrderedItem[]): number {
     let sum: number = 0
     items.forEach((item: OrderedItem) => {
-        // console.log("eveluating Item")
         if (item.time && !item.voided && Date.parse(item.time) >= start && Date.parse(item.time) <= end) {
             sum += item.price
-            console.log("item added")
         }
     })
     return sum

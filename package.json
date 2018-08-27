@@ -4,7 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
-    "test": "mocha -r ts-node/register test/servet.test.ts --timeout 60000 ",
+    "test": "mocha -r ts-node/register test/**.test.ts --timeout 120000 ",
     "build": "npm run && npm run build-ts",
     "build-ts": "tsc",
     "tslint": "tslint -c tslint.json -p tsconfig.json",
